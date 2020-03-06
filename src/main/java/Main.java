@@ -6,9 +6,13 @@
 /*----------------------------------------------------------------------------*/
 
 import java.io.IOException;
+import java.lang.reflect.Array;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 import com.google.gson.Gson;
@@ -18,20 +22,25 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import edu.wpi.cscore.CvSink;
+import edu.wpi.cscore.CvSource;
 import edu.wpi.cscore.MjpegServer;
 import edu.wpi.cscore.UsbCamera;
+import edu.wpi.cscore.VideoMode;
 import edu.wpi.cscore.VideoSource;
 import edu.wpi.first.cameraserver.CameraServer;
 import edu.wpi.first.networktables.EntryListenerFlags;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableEntry;
 import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.vision.VisionPipeline;
 import edu.wpi.first.vision.VisionThread;
+//import sun.awt.www.content.audio.basic;
 
 import org.opencv.core.Mat;
-
-
-
-
+import org.opencv.features2d.Features2d;
+import org.opencv.imgproc.Imgproc;
+import org.opencv.core.*;
 
 /*
    JSON format:
@@ -315,8 +324,17 @@ public final class Main {
       ntinst.startServer();
     } else {
       System.out.println("Setting up NetworkTables client for team " + team);
-      ntinst.startClientTeam(team);  
+      ntinst.startClientTeam(5757);
+      //ntinst.startClient("10.57.57.19");
+  
     }
+    //NetworkTable table = ntinst.getTable("datatable");
+    //NetworkTable table = NetworkTableInstance.getDefault().getTable("datatable");
+    NetworkTable table = NetworkTableInstance.getDefault().getTable("powercell");
+    NetworkTableEntry xEntry = table.getEntry("x");
+    NetworkTableEntry yEntry = table.getEntry("y");
+    NetworkTableEntry dEntry = table.getEntry("d");
+    NetworkTableEntry validEntry = table.getEntry("valid");
 
     // start cameras
     for (CameraConfig config : cameraConfigs) {
@@ -330,16 +348,80 @@ public final class Main {
 
     // start image processing on camera 0 if present
     if (cameras.size() >= 1) {
-      VisionThread visionThread = new VisionThread(cameras.get(0),
+      /*VisionThread visionThread = new VisionThread(cameras.get(0),
               new MyPipeline(), pipeline -> {
-        // do something with pipeline results
+                System.out.println("Hello from a thread!");
+                // do something with pipeline results
       });
+      */
+      // Get frame size
+      int frameWidth = cameras.get(0).getVideoMode().width;
+      int frameHeight = cameras.get(0).getVideoMode().height;
+      
+      System.out.println ("Width: " + frameWidth )  ; 
+      System.out.println ("Height: "+ frameHeight )  ;
+
       // something like this for GRIP:
-      // VisionThread visionThread = new VisionThread(cameras.get(0),
-      //         new GripPipeline(), pipeline -> {
-      //   System.out.println("something");
-      // });
-       //
+      VisionThread visionThread = new VisionThread(cameras.get(0),
+              new GripPipeline(), pipeline -> {
+                // Ident balls on image
+                double centerX = 0.0;
+                double centerY = 0.0;
+                double pointSize;
+                double distance;
+                
+                KeyPoint [] sortedCells = pipeline.findBlobsOutput().toArray();               
+                Arrays.sort(sortedCells, (KeyPoint a, KeyPoint b) -> Double.compare(a.pt.y,b.pt.y));
+                //sortedCells = sortedCells.reverse();
+                // if (sortedCells.length != 0 ) {
+                //   KeyPoint k = sortedCells[sortedCells.length-1];
+                //   centerX = k.pt.x;
+                //   centerY = k.pt.y;
+                //   xEntry.setDouble(centerX);
+                //   yEntry.setDouble(centerY);
+                //   validEntry.setBoolean(true);
+                // } else {
+                //   validEntry.setBoolean(false);
+                // }
+                for(int i=0; i< sortedCells.length; i++){
+                  KeyPoint k = sortedCells[i];
+                  centerX = k.pt.x - frameWidth/2;
+                  centerY = frameHeight - k.pt.y;
+                  pointSize = k.size;
+                  distance = Math.sqrt(centerX * centerX + centerY * centerY );
+                  System.out.print("x: "+ centerX);
+                  System.out.print(", y: "+ centerY);
+                  System.out.print(", size: "+ pointSize);
+                  System.out.print(", distance: "+ distance);
+                  System.out.print(", response: "+ k.response);
+                  System.out.println();
+                  sortedCells[i].pt.x = centerX;
+                  sortedCells[i].pt.y = centerY;
+                  sortedCells[i].response = (float) distance;
+                }
+                Arrays.sort(sortedCells, (KeyPoint a, KeyPoint b) -> Double.compare(a.response,b.response));
+                if (sortedCells.length != 0 ) {
+                  KeyPoint k = sortedCells[0];
+                  centerX = k.pt.x;
+                  centerY = k.pt.y;
+                  xEntry.setDouble(centerX);
+                  yEntry.setDouble(centerY);
+                  dEntry.setDouble(k.response);
+                  validEntry.setBoolean(true);
+                } else {
+                  validEntry.setBoolean(false);
+                }  //System.out.println("writing NT");
+            
+                
+
+              // Sample code from another year
+                //Imgproc.putText(outputImage, pipeline.getColor(), k.pt, Core.FONT_HERSHEY_COMPLEX_SMALL, .75, new Scalar(2,254,255));
+                // if (!pipeline.findBlobsOutput().isEmpty()) {
+                //   Rect r = Imgproc.boundingRect(pipeline.filterContoursOutput().get(0));
+                //   synchronized (imgLock) {
+                //       centerX = r.x + (r.width / 2);
+                //   }
+      });
       visionThread.start();
     }
 
@@ -352,4 +434,6 @@ public final class Main {
       }
     }
   }
+    
+
 }
